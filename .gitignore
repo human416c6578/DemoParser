@@ -1,0 +1,61 @@
+# --- Build directories ---
+build/
+out/
+bin/
+lib/
+
+# --- CMake files ---
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+
+# --- Generated project files ---
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# --- IDE / Editor files ---
+# Visual Studio
+*.vcxproj
+*.vcxproj.user
+*.vcxproj.filters
+*.sln
+
+# CLion / JetBrains
+.idea/
+cmake-build-*/
+
+# VSCode
+.vscode/
+
+# Sublime
+*.sublime*
+
+# --- OS / Misc files ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+
+# --- Demo / Data files (recommended not to commit raw demos) ---
+data/*
+*.dem
+
+# --- Tests output ---
+Testing/
+test-output/
+
+# --- Cache / temporary ---
+*.swp
+*.tmp
+*.bak
