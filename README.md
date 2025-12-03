@@ -1,4 +1,4 @@
-# DemoAnalyser ( Counter Strike 1.6 Demo Parser )
+# Counter Strike 1.6 Demo Parser
 
 This project is a C++ library for reading and parsing **Counter-Strike 1.6 / GoldSrc**
 `.dem` demo files.  
@@ -30,7 +30,7 @@ into demo playback and process the data.
   - Packed & DeltaPacked entity updates (players + custom entities)
 
   More can be added quite easily
-  
+
 - All handlers are **optional** thanks to weak linking
 
 ---
