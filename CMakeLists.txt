@@ -8,7 +8,6 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 
 add_library(demo_analyser
     src/DemoParser.cpp
-    src/DemoFrame.cpp
 )
 
 target_include_directories(demo_analyser PUBLIC include)
