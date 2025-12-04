@@ -6,6 +6,22 @@ It extracts the full event stream (frames + network events) and exposes it to th
 user through a **callback-based interface**, allowing external programs to hook
 into demo playback and process the data.
 
+## Sources & References
+
+This project was built using information from multiple community and official resources:
+
+- **coldemoplayer (C#)** – https://github.com/jpcy/coldemoplayer  
+  Used as the primary reference for understanding the overall parsing logic, event dispatch order,  
+  and how GoldSrc network game events are structured and interpreted.
+
+- **hlviewer.js** – https://github.com/skyrim/hlviewer.js  
+  Provided a complete and up-to-date specification of the `.dem` file format, frame types,  
+  and message layout, which helped correct and modernize legacy documentation.
+
+- **Valve GoldSrc Source Code** – https://github.com/ValveSoftware/halflife/  
+  Used to verify the meaning and contents of specific message types, user info fields,  
+  server info structures, movement variables, and entity state packing logic.
+
 ---
 
 ## Features
