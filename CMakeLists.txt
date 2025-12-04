@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.15)
-project(demo_analyser LANGUAGES CXX)
+project(demo_parser LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
-add_library(demo_analyser
+add_library(demo_parser
     src/DemoParser.cpp
 )
 
-target_include_directories(demo_analyser PUBLIC include)
+target_include_directories(demo_parser PUBLIC include)
 
 add_subdirectory(app)
 
