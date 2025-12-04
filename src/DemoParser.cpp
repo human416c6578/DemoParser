@@ -231,67 +231,87 @@ namespace demo_analyser
 
 	void DemoParser::parseDemo()
 	{
-		try {
-			file.seekg(0, std::ios::end);
-			std::streampos pos = file.tellg();
-			if (pos == std::streampos(-1)) throw std::runtime_error("Failed to get file size");
-			size_t fileSize = static_cast<size_t>(pos);
-			file.seekg(0, std::ios::beg);
+		// --- Read full file size ---
+		file.seekg(0, std::ios::end);
+		std::streampos endPos = file.tellg();
+		if (endPos == std::streampos(-1))
+			throw std::runtime_error("Failed to get file size");
 
-			std::vector<uint8_t> headerData(544);
-			file.read(reinterpret_cast<char*>(headerData.data()), headerData.size());
-			
-			readDemoHeader(file, headerData, fileSize);
+		size_t fileSize = static_cast<size_t>(endPos);
+		file.seekg(0, std::ios::beg);
 
-			Seek(544, std::ios::beg);
-			uint8_t currentDirectory = 0;
+		// --- Read demo header (always 544 bytes) ---
+		std::vector<uint8_t> headerData(544);
+		file.read(reinterpret_cast<char*>(headerData.data()), headerData.size());
 
-			while (true) {
-				FrameHeader frameHeader = ReadFrameHeader();
+		readDemoHeader(file, headerData, fileSize);
 
-				// "no loading segment" bug
-				// if (frameHeader.Type == 1 && serverInfoParsed) 
-				// {
-				// 	break;
-				// }
+		Seek(544, std::ios::beg);
 
-				if (frameHeader.Type == 0 || frameHeader.Type == 1) 
+		uint8_t currentDirectory = 0;
+
+		while (true)
+		{
+			FrameHeader frameHeader = ReadFrameHeader();
+
+			switch (frameHeader.Type)
+			{
+				// ------------------------------------------------------------
+				// Frame Type 0 or 1 : Game Data Frames
+				// ------------------------------------------------------------
+				case 0:
+				case 1:
 				{
-					GameDataFrameHeader gameDataFrameHeader = ReadGameDataFrameHeader();
+					GameDataFrameHeader gameDataHeader = ReadGameDataFrameHeader();
 
-					if (gameDataFrameHeader.Length > 0) {
-						// Read frame data
-						std::vector<uint8_t> frameData(gameDataFrameHeader.Length);
-						file.read(reinterpret_cast<char*>(frameData.data()), gameDataFrameHeader.Length);
+					if (gameDataHeader.Length == 0)
+						break;
 
-						try {
-							ParseGameDataMessages(frameData);
-						} catch (const std::exception& ex) {
-							throw std::runtime_error(std::string("Error parsing gamedata frame: ") + ex.what());
-						}
+					std::vector<uint8_t> frameData(gameDataHeader.Length);
+					file.read(reinterpret_cast<char*>(frameData.data()), gameDataHeader.Length);
+
+					try {
+						ParseGameDataMessages(frameData);
 					}
-				} else if (frameHeader.Type == 3)
-				{
+					catch (const std::exception& ex) {
+						throw std::runtime_error(
+							std::string("Error parsing gamedata frame: ") + ex.what()
+						);
+					}
 
+					break;
+				}
+
+				// ------------------------------------------------------------
+				// Frame Type 3 : Console Command
+				// ------------------------------------------------------------
+				case 3:
+				{
 					std::vector<uint8_t> frameData(64);
 					file.read(reinterpret_cast<char*>(frameData.data()), frameData.size());
 
 					bitBuffer = std::make_unique<BitBuffer>(frameData);
-
 					std::string command = bitBuffer->readString(64);
-					if(OnConsoleCommand)
+
+					if (OnConsoleCommand)
 						OnConsoleCommand(command);
 
-				} else  if(frameHeader.Type == 4)
+					break;
+				}
+
+				// ------------------------------------------------------------
+				// Frame Type 4 : Player State
+				// ------------------------------------------------------------
+				case 4:
 				{
-					try{
+					try
+					{
 						std::vector<uint8_t> frameData(32);
-						file.read(reinterpret_cast<char*>(frameData.data()), 32);
+						file.read(reinterpret_cast<char*>(frameData.data()), frameData.size());
 
 						bitBuffer = std::make_unique<BitBuffer>(frameData);
 
 						PlayerState state;
-
 						state.position[0] = bitBuffer->readFloat();
 						state.position[1] = bitBuffer->readFloat();
 						state.position[2] = bitBuffer->readFloat();
@@ -301,44 +321,56 @@ namespace demo_analyser
 						state.rotation[2] = bitBuffer->readFloat();
 
 						state.weaponFlags = bitBuffer->readUInt32();
-						state.fov = bitBuffer->readFloat();
+						state.fov         = bitBuffer->readFloat();
 
-
-						if(OnPlayerState)
+						if (OnPlayerState)
 							OnPlayerState(state);
-						
-						//SkipFrame(frameHeader.Type);
-						} catch (const std::exception& ex) {
-							throw std::runtime_error(std::string("Error parsing gamedata frame: ") + ex.what());
-						}
-				}
-				else if(frameHeader.Type == 5)
-				{
-					if(currentDirectory == 1)
-						break;
+					}
+					catch (const std::exception& ex)
+					{
+						throw std::runtime_error(
+							std::string("Error parsing player state frame: ") + ex.what()
+						);
+					}
 
-					currentDirectory++;
+					break;
 				}
-				else if (frameHeader.Type == 6)
+
+				// ------------------------------------------------------------
+				// Frame Type 5 : Directory
+				// ------------------------------------------------------------
+				case 5:
+					if (currentDirectory == 1)
+						return; // end of demo
+					currentDirectory++;
+					break;
+
+				// ------------------------------------------------------------
+				// Frame Type 6 : Event Frame (network messages)
+				// ------------------------------------------------------------
+				case 6:
 				{
 					std::vector<uint8_t> frameData(84);
-					file.read(reinterpret_cast<char*>(frameData.data()),frameData.size() );
+					file.read(reinterpret_cast<char*>(frameData.data()), frameData.size());
 
 					EventFrame eventFrame = ParseEventFrame(frameData);
 
-					if(OnEventFrame)
+					if (OnEventFrame)
 						OnEventFrame(eventFrame);
+
+					break;
 				}
-				else 
-				{
+
+				// ------------------------------------------------------------
+				// Unknown / unhandled frame types
+				// ------------------------------------------------------------
+				default:
 					SkipFrame(frameHeader.Type);
-				}
+					break;
 			}
-		} catch (...) 
-		{
-			throw; // rethrow exception
 		}
 	}
+
 
 	void DemoParser::readDemoHeader(std::ifstream &file, const std::vector<uint8_t>& headerData, const uint32_t fileSize) 
 	{
