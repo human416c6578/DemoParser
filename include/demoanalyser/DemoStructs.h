@@ -60,6 +60,9 @@ struct PlayerState {
 #define MAX_PHYSINFO_STRING 256
 
 struct ClientData {
+    bool delta_sequence;
+    uint8_t delta_mask;
+
     float origin[3];
     float velocity[3];
 

@@ -641,10 +641,9 @@ namespace demo_analyser
 	{
 		// Read delta sequence bit
 		bool deltaSequence = bitBuffer->readBoolean();
+		uint8_t deltaMask;
 		if (deltaSequence) {
-			//printf("DELTA SEQUENCE!!!\n");
-			// skip delta sequence number (8 bits)
-			bitBuffer->seekBits(8);
+			deltaMask = bitBuffer->readByte();
 		}
 
 		// Read clientdata delta block
@@ -655,6 +654,9 @@ namespace demo_analyser
 		clientdata_delta_structure->readDelta(*bitBuffer, &halflifedelta);
 
 		ClientData clientData = toClientData(halflifedelta);
+
+		clientData.delta_sequence = deltaSequence;
+		clientData.delta_mask = deltaMask;
 
 		if(OnClientData)
 			OnClientData(clientData);
