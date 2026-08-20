@@ -14,6 +14,10 @@ inline ClientData toClientData(const HalfLifeDelta& delta)
 
     auto getInt = [&](const char* name) -> int {
         if (const DeltaValue* val = delta.findEntryValue(name)) {
+            if (auto ptr = std::get_if<int8_t>(val)) return *ptr;
+            if (auto ptr = std::get_if<uint8_t>(val)) return *ptr;
+            if (auto ptr = std::get_if<int16_t>(val)) return *ptr;
+            if (auto ptr = std::get_if<uint16_t>(val)) return *ptr;
             if (auto ptr = std::get_if<int32_t>(val)) return *ptr;
             if (auto ptr = std::get_if<uint32_t>(val)) return static_cast<int>(*ptr);
         }
@@ -86,9 +90,17 @@ inline EntityStatePlayer toEntityStatePlayer(const HalfLifeDelta& delta)
 {
     EntityStatePlayer e{};
 
-    auto getFloat = [&](const char* name){ return toFloat(*delta.findEntryValue(name)); };
+    auto getFloat = [&](const char* name){
+        if (const DeltaValue* val = delta.findEntryValue(name))
+            return toFloat(*val);
+        return 0.0f;
+    };
     auto getInt = [&](const char* name){ 
         if (const DeltaValue* val = delta.findEntryValue(name)) {
+            if (auto p = std::get_if<int8_t>(val)) return static_cast<int>(*p);
+            if (auto p = std::get_if<uint8_t>(val)) return static_cast<int>(*p);
+            if (auto p = std::get_if<int16_t>(val)) return static_cast<int>(*p);
+            if (auto p = std::get_if<uint16_t>(val)) return static_cast<int>(*p);
             if (auto p = std::get_if<int32_t>(val)) return *p;
             if (auto p = std::get_if<uint32_t>(val)) return static_cast<int>(*p);
         }
@@ -155,6 +167,10 @@ inline CustomEntityState toCustomEntityState(const HalfLifeDelta& delta)
 
     auto getInt = [&](const char* name) -> int {
         if (const DeltaValue* val = delta.findEntryValue(name)) {
+            if (auto ptr = std::get_if<int8_t>(val)) return *ptr;
+            if (auto ptr = std::get_if<uint8_t>(val)) return *ptr;
+            if (auto ptr = std::get_if<int16_t>(val)) return *ptr;
+            if (auto ptr = std::get_if<uint16_t>(val)) return *ptr;
             if (auto ptr = std::get_if<int32_t>(val)) return *ptr;
             if (auto ptr = std::get_if<uint32_t>(val)) return static_cast<int>(*ptr);
         }

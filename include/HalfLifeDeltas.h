@@ -5,6 +5,7 @@
 #include <variant>
 #include <stdexcept>
 #include <cstdint>
+#include <cmath>
 #include <BitBuffer.h>
 
 // Variant type to store delta values
@@ -97,8 +98,16 @@ public:
 
     const std::string& getName() const { return name; }
 
-    void addEntry(const std::string& entryName, uint32_t nBits, float divisor, EntryFlags flags) {
-        entryList.push_back({entryName, nBits, divisor, flags, 1.0f});
+    void addEntry(const std::string& entryName, uint32_t nBits, float divisor,
+                  EntryFlags flags, float preMultiplier = 1.0f) {
+        if (nBits == 0 || nBits > 32)
+            throw std::invalid_argument("Delta entry bit count must be between 1 and 32");
+        if (!std::isfinite(divisor) || divisor <= 0.0f)
+            throw std::invalid_argument("Delta entry divisor must be positive and finite");
+        if (!std::isfinite(preMultiplier))
+            throw std::invalid_argument("Delta entry preMultiplier must be finite");
+
+        entryList.push_back({entryName, nBits, divisor, flags, preMultiplier});
     }
 
     void addEntry(const HalfLifeDelta& delta) {
@@ -111,32 +120,33 @@ public:
         auto extractString = [](const DeltaValue* val, const std::string& key) -> std::string {
             if (!val) throw std::runtime_error("Missing entry: " + key);
             if (auto ptr = std::get_if<std::string>(val)) return *ptr;
-            return ""; // treat missing or wrong type as empty
+            throw std::runtime_error("Invalid entry type: " + key);
         };
 
         auto extractUInt32 = [](const DeltaValue* val, const std::string& key) -> uint32_t {
-            if (!val) return 0;
+            if (!val) throw std::runtime_error("Missing entry: " + key);
             if (auto ptr = std::get_if<uint32_t>(val)) return *ptr;
             if (auto ptr = std::get_if<int32_t>(val)) return static_cast<uint32_t>(*ptr);
-            return 0; // fallback
+            throw std::runtime_error("Invalid entry type: " + key);
         };
 
         auto extractFloat = [](const DeltaValue* val, const std::string& key) -> float {
-            if (!val) return 1.0f; // default divisor
+            if (!val) throw std::runtime_error("Missing entry: " + key);
             if (auto ptr = std::get_if<float>(val)) return *ptr;
             if (auto ptr = std::get_if<uint32_t>(val)) return static_cast<float>(*ptr);
             if (auto ptr = std::get_if<int32_t>(val)) return static_cast<float>(*ptr);
-            return 1.0f; // fallback
+            throw std::runtime_error("Invalid entry type: " + key);
         };
 
-        std::string name    = extractString(nameVal, "name");
+        std::string entryName = extractString(nameVal, "name");
         uint32_t nBits      = extractUInt32(nBitsVal, "nBits");
         float divisor       = extractFloat(divisorVal, "divisor");
+        float preMultiplier = extractFloat(delta.findEntryValue("preMultiplier"), "preMultiplier");
         HalfLifeDeltaStructure::EntryFlags flags = static_cast<HalfLifeDeltaStructure::EntryFlags>(
             extractUInt32(flagsVal, "flags")
         );
 
-        addEntry(name, nBits, divisor, flags);
+        addEntry(entryName, nBits, divisor, flags, preMultiplier);
     }
 
 
@@ -219,12 +229,14 @@ private:
                 bitsToRead--;
             }
 
-            float value = static_cast<float>(bitBuffer.readUnsignedBits(bitsToRead)) / e.divisor;
+            const uint32_t rawValue = bitsToRead == 0 ? 0 : bitBuffer.readUnsignedBits(bitsToRead);
+            float value = static_cast<float>(rawValue) * e.preMultiplier / e.divisor;
             return negative ? -value : value;
         }
 
         if (static_cast<uint32_t>(e.flags) & static_cast<uint32_t>(EntryFlags::Angle)) {
-            return static_cast<float>(bitBuffer.readUnsignedBits(static_cast<int>(e.nBits)) * (360.0f / static_cast<float>(1 << e.nBits)));
+            const float scale = 360.0f / std::ldexp(1.0f, static_cast<int>(e.nBits));
+            return static_cast<float>(bitBuffer.readUnsignedBits(static_cast<int>(e.nBits))) * scale;
         }
 
         if (static_cast<uint32_t>(e.flags) & static_cast<uint32_t>(EntryFlags::String)) {
@@ -236,13 +248,25 @@ private:
 
     int32_t parseInt(BitBuffer& bitBuffer, const Entry& e) const {
         bool negative = bitBuffer.readBoolean();
-        int32_t val = static_cast<int32_t>(bitBuffer.readUnsignedBits(e.nBits - 1));
-        val = static_cast<int32_t>(val / e.divisor);
+        const uint32_t rawValue = e.nBits == 1 ? 0 : bitBuffer.readUnsignedBits(e.nBits - 1);
+        int32_t val;
+        if (e.preMultiplier == 1.0f) {
+            const uint32_t divisor = static_cast<uint32_t>(e.divisor);
+            if (divisor == 0) throw std::runtime_error("Delta entry divisor is zero");
+            val = static_cast<int32_t>(rawValue / divisor);
+        } else {
+            val = static_cast<int32_t>(static_cast<long double>(rawValue) * e.preMultiplier / e.divisor);
+        }
         return negative ? -val : val;
     }
 
     uint32_t parseUnsignedInt(BitBuffer& bitBuffer, const Entry& e) const {
-        uint32_t val = bitBuffer.readUnsignedBits(e.nBits);
-        return val / static_cast<uint32_t>(e.divisor);
+        const uint32_t rawValue = bitBuffer.readUnsignedBits(e.nBits);
+        if (e.preMultiplier == 1.0f) {
+            const uint32_t divisor = static_cast<uint32_t>(e.divisor);
+            if (divisor == 0) throw std::runtime_error("Delta entry divisor is zero");
+            return rawValue / divisor;
+        }
+        return static_cast<uint32_t>(static_cast<long double>(rawValue) * e.preMultiplier / e.divisor);
     }
 };

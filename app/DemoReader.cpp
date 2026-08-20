@@ -1,6 +1,8 @@
 #include <demoanalyser/DemoParser.h>
 #include <demoanalyser/EventHandlers.h>
 
+#include <exception>
+
 void OnReadHeader(const DemoHeader demoHeader)
 {
     std::cout<<demoHeader.mapName<<std::endl;
@@ -61,9 +63,13 @@ int main(int argc, char* argv[])
 
     const char* filename = argv[1];
 
-    // Read demo header
-    demo_analyser::DemoParser demoParser(filename);
-    demoParser.parseDemo();
+    try {
+        demo_analyser::DemoParser demoParser(filename);
+        demoParser.parseDemo();
+    } catch (const std::exception& error) {
+        std::cerr << "Failed to parse demo: " << error.what() << '\n';
+        return 1;
+    }
 
     //demo_analyser::PrintHeader(demo.header);
 

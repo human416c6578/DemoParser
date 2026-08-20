@@ -70,6 +70,7 @@ namespace demo_analyser
 		SVC_SENDEXTRAINFO           = 54,
 		SVC_TIMESCALE               = 55,
 		SVC_RESOURCELOCATION        = 56,
+		SVC_SENDCVARVALUE           = 57,
 		SVC_SENDCVARVALUE2          = 58
 	};
 
@@ -134,6 +135,7 @@ namespace demo_analyser
 			case SVCMessage::SVC_SENDEXTRAINFO:       return "SVC_SENDEXTRAINFO";
 			case SVCMessage::SVC_TIMESCALE:           return "SVC_TIMESCALE";
 			case SVCMessage::SVC_RESOURCELOCATION:    return "SVC_RESOURCELOCATION";
+			case SVCMessage::SVC_SENDCVARVALUE:       return "SVC_SENDCVARVALUE";
 			case SVCMessage::SVC_SENDCVARVALUE2:      return "SVC_SENDCVARVALUE2";
 		}
 		return ""; // empty = likely user message
@@ -181,12 +183,16 @@ namespace demo_analyser
 
 			std::unordered_map<std::string, UserMessage> userMessageTable;
 
-			int maxClients;
+			int maxClients = 0;
 			int frames = 0;
 			bool serverInfoParsed = false;
+			std::uint64_t fileSize = 0;
 
 			bool readingGameData = false;
-			void readDemoHeader(std::ifstream &file, const std::vector<uint8_t>& headerData, const uint32_t fileSize);
+			void readDemoHeader(const std::vector<uint8_t>& headerData, std::uint64_t demoFileSize);
+			void ReadExact(void* destination, std::streamsize size, const char* description);
+			uint32_t ReadUInt32LE();
+			float ReadFloatLE();
 			FrameHeader ReadFrameHeader();
 			GameDataFrameHeader ReadGameDataFrameHeader();
 			void ParseGameDataMessages(const std::vector<uint8_t>& frameData);
@@ -205,6 +211,8 @@ namespace demo_analyser
 			void MessageVoiceInit();
 			void MessageCustomization();
 			void MessageVoiceData();
+			void MessageDirector();
+			void MessageSpawnStatic();
 			void MessageSendExtraInfo();
 			void MessageResourceLocation();
 			void MessageSendCvarValue();
@@ -245,7 +253,7 @@ namespace demo_analyser
 
 			void Seek(std::streamoff offset, std::ios_base::seekdir origin = std::ios::cur);
 			void SkipFrame(uint8_t frameType);
-			int32_t GetFrameLength(uint8_t frameType);
+			std::streamoff GetFrameLength(uint8_t frameType);
     };
 
 }

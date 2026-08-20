@@ -7,6 +7,7 @@
 #include <sstream>
 #include <cstring>
 #include <array>
+#include <limits>
 
 enum class EndianType { Little, Big };
 
@@ -17,7 +18,8 @@ private:
 	EndianType endian = EndianType::Little;
 
 	void checkBounds(size_t nBits) const {
-		if (currentBit + nBits > data.size() * 8) {
+		const size_t totalBits = data.size() * 8;
+		if (currentBit > totalBits || nBits > totalBits - currentBit) {
 			throw std::runtime_error("BitBuffer out of range");
 		}
 	}
@@ -36,20 +38,40 @@ public:
 	void setEndian(EndianType e) { endian = e; }
 	EndianType getEndian() const { return endian; }
 
-	void seekBits(int offset) { seekBits(offset, std::ios_base::cur); }
+	void seekBits(std::int64_t offset) { seekBits(offset, std::ios_base::cur); }
 
-	void seekBits(int offset, std::ios_base::seekdir origin) {
-		if (origin == std::ios_base::beg) currentBit = offset;
-		else if (origin == std::ios_base::cur) currentBit += offset;
-		else if (origin == std::ios_base::end) currentBit = data.size() * 8 - offset;
+	void seekBits(std::int64_t offset, std::ios_base::seekdir origin) {
+		const size_t totalBits = data.size() * 8;
+		const std::int64_t base =
+			origin == std::ios_base::beg ? 0 :
+			origin == std::ios_base::end ? static_cast<std::int64_t>(totalBits) :
+			static_cast<std::int64_t>(currentBit);
+		if (offset > 0 && base > std::numeric_limits<std::int64_t>::max() - offset)
+			throw std::runtime_error("BitBuffer seek overflow");
+		if (offset == std::numeric_limits<std::int64_t>::min() ||
+			(offset < 0 && base < std::numeric_limits<std::int64_t>::min() - offset))
+			throw std::runtime_error("BitBuffer seek overflow");
+		const std::int64_t target = base + offset;
 
-		if (currentBit < 0 || currentBit > data.size() * 8) {
+		if (target < 0 || static_cast<std::uint64_t>(target) > totalBits) {
 			throw std::runtime_error("BitBuffer out of range");
 		}
+
+		currentBit = static_cast<size_t>(target);
 	}
 
-	void seekBytes(int offset) { seekBits(offset * 8); }
-	void seekBytes(int offset, std::ios_base::seekdir origin) { seekBits(offset * 8, origin); }
+	void seekBytes(std::int64_t offset) {
+		if ((offset > 0 && offset > std::numeric_limits<std::int64_t>::max() / 8) ||
+			(offset < 0 && offset < std::numeric_limits<std::int64_t>::min() / 8))
+			throw std::runtime_error("BitBuffer byte seek overflow");
+		seekBits(offset * 8);
+	}
+	void seekBytes(std::int64_t offset, std::ios_base::seekdir origin) {
+		if ((offset > 0 && offset > std::numeric_limits<std::int64_t>::max() / 8) ||
+			(offset < 0 && offset < std::numeric_limits<std::int64_t>::min() / 8))
+			throw std::runtime_error("BitBuffer byte seek overflow");
+		seekBits(offset * 8, origin);
+	}
 
 	void skipRemainingBits() {
 		size_t bitOffset = currentBit % 8;
@@ -94,14 +116,14 @@ public:
 	int32_t readBits(int nBits) {
 		if (nBits <= 0 || nBits > 32) throw std::invalid_argument("nBits must be 1-32");
 
-		uint32_t magnitude = readUnsignedBits(nBits - 1);
+		uint32_t magnitude = nBits == 1 ? 0 : readUnsignedBits(nBits - 1);
 		bool sign = readBoolean();
 
-		if (sign) {
-			return -static_cast<int32_t>((1 << (nBits - 1)) - magnitude);
-		} else {
-			return static_cast<int32_t>(magnitude);
-		}
+		const uint32_t signMagnitude = uint32_t{1} << (nBits - 1);
+		const std::int64_t value = sign
+			? -static_cast<std::int64_t>(signMagnitude - magnitude)
+			: static_cast<std::int64_t>(magnitude);
+		return static_cast<int32_t>(value);
 	}
 
 	uint8_t readByte() { return static_cast<uint8_t>(readUnsignedBits(8)); }
@@ -122,11 +144,13 @@ public:
 	uint32_t readUInt32() { return readUnsignedBits(32); }
 
 	float readFloat() {
-		uint8_t bytes[4];
-		auto b = readBytes(4);
-		std::memcpy(bytes, b.data(), 4);
-		float val;
-		std::memcpy(&val, bytes, sizeof(float));
+		const auto bytes = readBytes(4);
+		const uint32_t bits = static_cast<uint32_t>(bytes[0]) |
+			(static_cast<uint32_t>(bytes[1]) << 8) |
+			(static_cast<uint32_t>(bytes[2]) << 16) |
+			(static_cast<uint32_t>(bytes[3]) << 24);
+		float val = 0.0f;
+		std::memcpy(&val, &bits, sizeof(val));
 		return val;
 	}
 
@@ -141,12 +165,24 @@ public:
 	}
 
 	std::string readString(size_t length) {
-		size_t startBit = currentBit;
-		std::string s = readString();
-		size_t bitsRead = currentBit - startBit;
-		size_t remainingBits = length * 8 - bitsRead;
-		if (remainingBits > 0) seekBits(remainingBits);
-		return s;
+		if (length == 0) return {};
+		if (length > std::numeric_limits<size_t>::max() / 8)
+			throw std::invalid_argument("String length is too large");
+
+		checkBounds(length * 8);
+
+		std::string result;
+		result.reserve(length);
+		for (size_t i = 0; i < length; ++i) {
+			const uint8_t byte = readByte();
+			if (byte == 0) {
+				seekBytes(static_cast<std::int64_t>(length - i - 1));
+				return result;
+			}
+			result.push_back(static_cast<char>(byte));
+		}
+
+		return result;
 	}
 
 	std::array<float, 3> readVectorCoord() {
@@ -180,7 +216,7 @@ public:
 			fractionValue = readUnsignedBits(3);
 		}
 
-		float value = intValue + static_cast<float>(fractionValue) * 1.0f / 32.0f;
+		float value = static_cast<float>(intValue) + static_cast<float>(fractionValue) * 1.0f / 32.0f;
 		if (sign) value = -value;
 
 		return value;
@@ -199,10 +235,11 @@ public:
 	}
 
 	void zeroOutBits(size_t nBits) {
+		checkBounds(nBits);
 		for (size_t i = 0; i < nBits; ++i) {
 			size_t byteIndex = currentBit / 8;
 			size_t bitIndex = currentBit % 8;
-			data[byteIndex] &= ~(1 << bitIndex);  // clear the bit
+			data[byteIndex] &= static_cast<uint8_t>(~(uint8_t{1} << bitIndex));  // clear the bit
 			++currentBit;
 		}
 	}

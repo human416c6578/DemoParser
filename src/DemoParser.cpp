@@ -5,6 +5,8 @@
 #include <demoanalyser/DeltaParsers.h>
 
 #include <cstdint>
+#include <array>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -16,9 +18,9 @@ namespace demo_analyser
 
 	DemoParser::DemoParser(const std::string& path)
 		: file(path, std::ios::binary | std::ios::ate)
-	{	
+	{
 		if (!file.is_open()) {
-			std::cerr << "Error opening file: " << path << "\n";
+			throw std::runtime_error("Error opening file: " + path);
 		}
 
 		{
@@ -27,6 +29,25 @@ namespace demo_analyser
 				0,
 				nullptr 
 			);
+
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_DISCONNECT), 0,
+				[this]() { MessagePrint(); });
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_VERSION), 4, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_STOPSOUND), 2, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_PARTICLE), 11, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_SPAWN), 0,
+				[this]() { MessageSpawnStatic(); });
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_SETPAUSE), 1, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_CENTERPRINT), 0,
+				[this]() { MessagePrint(); });
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_SPAWNSTATICSOUND), 14, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_INTERMISSION), 0, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_FINALE), 1, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_CROSSHAIRANGLE), 2, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_SOUNDFADE), 4, nullptr);
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_FILETXFERFAILED), 0,
+				[this]() { MessagePrint(); });
+			AddMessageHandler(static_cast<uint8_t>(SVCMessage::SVC_TIMESCALE), 4, nullptr);
 
 			AddMessageHandler(
 				static_cast<uint8_t>(SVCMessage::SVC_DELTADESCRIPTION),
@@ -168,9 +189,27 @@ namespace demo_analyser
 			);
 
 			AddMessageHandler(
+				static_cast<uint8_t>(SVCMessage::SVC_VOICEDATA),
+				0,
+				[this]() { MessageVoiceData(); }
+			);
+
+			AddMessageHandler(
 				static_cast<uint8_t>(SVCMessage::SVC_CUSTOMIZATION),
 				0,
 				[this]() { MessageCustomization(); }
+			);
+
+			AddMessageHandler(
+				static_cast<uint8_t>(SVCMessage::SVC_DIRECTOR),
+				0,
+				[this]() { MessageDirector(); }
+			);
+
+			AddMessageHandler(
+				static_cast<uint8_t>(SVCMessage::SVC_SENDCVARVALUE),
+				0,
+				[this]() { MessageSendCvarValue(); }
 			);
 
 			AddMessageHandler(
@@ -229,22 +268,55 @@ namespace demo_analyser
 		
 	}
 
+	void DemoParser::ReadExact(void* destination, std::streamsize size, const char* description)
+	{
+		file.read(static_cast<char*>(destination), size);
+		if (file.gcount() != size)
+			throw std::runtime_error(std::string("Unexpected end of file while reading ") + description);
+	}
+
+	uint32_t DemoParser::ReadUInt32LE()
+	{
+		std::array<uint8_t, 4> bytes{};
+		ReadExact(bytes.data(), static_cast<std::streamsize>(bytes.size()), "a 32-bit value");
+		return static_cast<uint32_t>(bytes[0]) |
+			(static_cast<uint32_t>(bytes[1]) << 8) |
+			(static_cast<uint32_t>(bytes[2]) << 16) |
+			(static_cast<uint32_t>(bytes[3]) << 24);
+	}
+
+	float DemoParser::ReadFloatLE()
+	{
+		const uint32_t bits = ReadUInt32LE();
+		float value = 0.0f;
+		std::memcpy(&value, &bits, sizeof(value));
+		return value;
+	}
+
 	void DemoParser::parseDemo()
 	{
 		// --- Read full file size ---
+		file.clear();
 		file.seekg(0, std::ios::end);
 		std::streampos endPos = file.tellg();
-		if (endPos == std::streampos(-1))
+		if (endPos == std::streampos(-1) || !file)
 			throw std::runtime_error("Failed to get file size");
 
-		size_t fileSize = static_cast<size_t>(endPos);
+		fileSize = static_cast<std::uint64_t>(endPos);
+		constexpr std::uint64_t HeaderSize = 544;
+		constexpr std::uint64_t DirectoryDataSize = 4 + 92 * 2;
+		if (fileSize < HeaderSize + DirectoryDataSize)
+			throw std::runtime_error("Demo file is too small");
+
 		file.seekg(0, std::ios::beg);
+		if (!file)
+			throw std::runtime_error("Failed to seek to the demo header");
 
 		// --- Read demo header (always 544 bytes) ---
 		std::vector<uint8_t> headerData(544);
-		file.read(reinterpret_cast<char*>(headerData.data()), headerData.size());
+		ReadExact(headerData.data(), static_cast<std::streamsize>(headerData.size()), "the demo header");
 
-		readDemoHeader(file, headerData, fileSize);
+		readDemoHeader(headerData, fileSize);
 
 		Seek(544, std::ios::beg);
 
@@ -252,6 +324,11 @@ namespace demo_analyser
 
 		while (true)
 		{
+			const std::streampos frameStart = file.tellg();
+			if (frameStart == std::streampos(-1) ||
+				static_cast<std::uint64_t>(frameStart) >= fileSize)
+				throw std::runtime_error("Unexpected end of file before the demo ended");
+
 			FrameHeader frameHeader = ReadFrameHeader();
 
 			switch (frameHeader.Type)
@@ -267,8 +344,18 @@ namespace demo_analyser
 					if (gameDataHeader.Length == 0)
 						break;
 
+					const std::streampos payloadStart = file.tellg();
+					constexpr uint32_t MaxGameDataFrameSize = 64u * 1024u * 1024u;
+					if (payloadStart == std::streampos(-1) ||
+						static_cast<std::uint64_t>(payloadStart) > fileSize ||
+						gameDataHeader.Length > MaxGameDataFrameSize ||
+						static_cast<std::uint64_t>(gameDataHeader.Length) >
+							fileSize - static_cast<std::uint64_t>(payloadStart))
+						throw std::runtime_error("Invalid game data frame length");
+
 					std::vector<uint8_t> frameData(gameDataHeader.Length);
-					file.read(reinterpret_cast<char*>(frameData.data()), gameDataHeader.Length);
+					ReadExact(frameData.data(), static_cast<std::streamsize>(frameData.size()),
+						"game data frame payload");
 
 					try {
 						ParseGameDataMessages(frameData);
@@ -288,7 +375,8 @@ namespace demo_analyser
 				case 3:
 				{
 					std::vector<uint8_t> frameData(64);
-					file.read(reinterpret_cast<char*>(frameData.data()), frameData.size());
+					ReadExact(frameData.data(), static_cast<std::streamsize>(frameData.size()),
+						"console command frame");
 
 					bitBuffer = std::make_unique<BitBuffer>(frameData);
 					std::string command = bitBuffer->readString(64);
@@ -307,7 +395,8 @@ namespace demo_analyser
 					try
 					{
 						std::vector<uint8_t> frameData(32);
-						file.read(reinterpret_cast<char*>(frameData.data()), frameData.size());
+						ReadExact(frameData.data(), static_cast<std::streamsize>(frameData.size()),
+							"player state frame");
 
 						bitBuffer = std::make_unique<BitBuffer>(frameData);
 
@@ -351,7 +440,8 @@ namespace demo_analyser
 				case 6:
 				{
 					std::vector<uint8_t> frameData(84);
-					file.read(reinterpret_cast<char*>(frameData.data()), frameData.size());
+					ReadExact(frameData.data(), static_cast<std::streamsize>(frameData.size()),
+						"event frame");
 
 					EventFrame eventFrame = ParseEventFrame(frameData);
 
@@ -372,7 +462,7 @@ namespace demo_analyser
 	}
 
 
-	void DemoParser::readDemoHeader(std::ifstream &file, const std::vector<uint8_t>& headerData, const uint32_t fileSize) 
+	void DemoParser::readDemoHeader(const std::vector<uint8_t>& headerData, const std::uint64_t demoFileSize)
 	{
 		DemoHeader header;
 
@@ -398,9 +488,10 @@ namespace demo_analyser
 		header.directoryOffset = bitBuffer->readUInt32();
 
 		constexpr size_t DirectoryEntrySize = 92;
-		uint32_t expectedOffset = static_cast<uint32_t>(fileSize - 4 - (DirectoryEntrySize * 2));
+		const std::uint64_t expectedOffset = demoFileSize - 4 - (DirectoryEntrySize * 2);
 
-		if (header.directoryOffset != expectedOffset) {
+		if (header.directoryOffset < 0 ||
+			static_cast<std::uint64_t>(header.directoryOffset) != expectedOffset) {
 			std::cerr << "Read offset: " << header.directoryOffset
 					<< " (0x" << std::hex << header.directoryOffset << std::dec << ")\n";
 
@@ -411,9 +502,12 @@ namespace demo_analyser
 		}
 		
 		file.seekg(header.directoryOffset, std::ios::beg);
+		if (!file)
+			throw std::runtime_error("Failed to seek to directory entries");
 		
 		std::vector<uint8_t> directoryEntriesData(4 + 2 * 92);
-		file.read(reinterpret_cast<char*>(directoryEntriesData.data()), directoryEntriesData.size());
+		ReadExact(directoryEntriesData.data(), static_cast<std::streamsize>(directoryEntriesData.size()),
+			"directory entries");
 		bitBuffer = std::make_unique<BitBuffer>(directoryEntriesData);
 
 		int32_t nDirectoryEntries = 0;
@@ -443,18 +537,16 @@ namespace demo_analyser
 	{
 		FrameHeader header{};
 
-		file.read(reinterpret_cast<char*>(&header.Type), sizeof(header.Type));
-
-		file.read(reinterpret_cast<char*>(&header.Timestamp), sizeof(header.Timestamp));
-
-		file.read(reinterpret_cast<char*>(&header.Number), sizeof(header.Number));
+		ReadExact(&header.Type, sizeof(header.Type), "frame type");
+		header.Timestamp = ReadFloatLE();
+		header.Number = ReadUInt32LE();
 
 		return header;
 	}
 
-	int32_t DemoParser::GetFrameLength(uint8_t frameType) 
+	std::streamoff DemoParser::GetFrameLength(uint8_t frameType)
 	{
-		int32_t length = 0;
+		std::streamoff length = 0;
 
 		switch (frameType) {
 			case 2:
@@ -481,19 +573,23 @@ namespace demo_analyser
 				break;
 
 			case 8: {
-				file.seekg(4, std::ios::cur);
-				int32_t val;
-				file.read(reinterpret_cast<char*>(&val), sizeof(val));
-				file.seekg(-8, std::ios::cur);
-				length = val + 24;
+				Seek(4);
+				const uint32_t val = ReadUInt32LE();
+				Seek(-8);
+				if (static_cast<std::uint64_t>(val) >
+					static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max()) - 24)
+					throw std::runtime_error("Frame type 8 length is too large");
+				length = static_cast<std::streamoff>(val) + 24;
 				break;
 			}
 
 			case 9: {
-				int32_t val;
-				file.read(reinterpret_cast<char*>(&val), sizeof(val));
-				length = 4 + val;
-				file.seekg(-4, std::ios::cur);
+				const uint32_t val = ReadUInt32LE();
+				Seek(-4);
+				if (static_cast<std::uint64_t>(val) >
+					static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max()) - 4)
+					throw std::runtime_error("Frame type 9 length is too large");
+				length = static_cast<std::streamoff>(val) + 4;
 				break;
 			}
 
@@ -506,8 +602,17 @@ namespace demo_analyser
 
 	void DemoParser::SkipFrame(uint8_t frameType) 
 	{
-		int32_t length = GetFrameLength(frameType);
-		file.seekg(length, std::ios::cur);
+		const std::streamoff length = GetFrameLength(frameType);
+		if (length < 0)
+			throw std::runtime_error("Negative frame length");
+
+		const std::streampos current = file.tellg();
+		if (current == std::streampos(-1) ||
+			static_cast<std::uint64_t>(current) > fileSize ||
+			static_cast<std::uint64_t>(length) > fileSize - static_cast<std::uint64_t>(current))
+			throw std::runtime_error("Frame extends beyond end of file");
+
+		Seek(length);
 	}
 
 	GameDataFrameHeader DemoParser::ReadGameDataFrameHeader() 
@@ -515,22 +620,20 @@ namespace demo_analyser
 		GameDataFrameHeader header{};
 
 		Seek(220);
-		file.read(reinterpret_cast<char*>(&header.ResolutionWidth), sizeof(header.ResolutionWidth));
-		file.read(reinterpret_cast<char*>(&header.ResolutionHeight), sizeof(header.ResolutionHeight));
+		header.ResolutionWidth = ReadUInt32LE();
+		header.ResolutionHeight = ReadUInt32LE();
 
 
 		Seek(236);
 
 
-		file.read(reinterpret_cast<char*>(&header.Length), sizeof(header.Length));
+		header.Length = ReadUInt32LE();
 
 		return header;
 	}
 
 	void DemoParser::ParseGameDataMessages(const std::vector<uint8_t>& frameData)
 	{
-		int64_t gameDataStartOffset = file.tellg() - static_cast<std::streamoff>(frameData.size());
-
 		// load bit buffer
 		bitBuffer = std::make_unique<BitBuffer>(frameData);
 		readingGameData = true;
@@ -538,7 +641,6 @@ namespace demo_analyser
 		try {
 			while (true)
 			{
-				int32_t messageFrameOffset = bitBuffer->currentByte();
 				uint8_t messageId = bitBuffer->readByte();
 
 				std::string messageName = SVCMessageName(messageId);
@@ -548,9 +650,12 @@ namespace demo_analyser
 				MessageHandler* handler = FindMessageHandler(messageId);
 				
 				if (!handler)
-					throw std::runtime_error(
-						"Unknown message handler for ID " + std::to_string(messageId)
-					);
+				{
+					std::cerr << "Skipping unsupported message " << messageName
+						<< " (ID " << static_cast<int>(messageId)
+						<< ") and the remainder of this game data frame\n";
+					break;
+				}
 
 				if (handler->Callback)
 				{
@@ -583,7 +688,6 @@ namespace demo_analyser
 		}
 		catch (...) {
 			readingGameData = false;
-			file.close();
 			throw;
 		}
 
@@ -641,7 +745,7 @@ namespace demo_analyser
 	{
 		// Read delta sequence bit
 		bool deltaSequence = bitBuffer->readBoolean();
-		uint8_t deltaMask;
+		uint8_t deltaMask = 0;
 		if (deltaSequence) {
 			deltaMask = bitBuffer->readByte();
 		}
@@ -920,7 +1024,7 @@ namespace demo_analyser
 			std::string entityTypeString;
 
 			if ((entityType & 1) != 0) {  // is bit 1 set?
-				if (entityIndex > 0 && entityIndex <= maxClients) {
+				if (entityIndex > 0 && entityIndex <= static_cast<uint32_t>(maxClients)) {
 					entityTypeString = "entity_state_player_t";
 				} else {
 					entityTypeString = "entity_state_t";
@@ -974,6 +1078,20 @@ namespace demo_analyser
         uint16_t length = bitBuffer->readUInt16();
         bitBuffer->seekBytes(length);
     }
+
+	void DemoParser::MessageDirector()
+	{
+		const uint8_t length = bitBuffer->readByte();
+		bitBuffer->seekBytes(length);
+	}
+
+	void DemoParser::MessageSpawnStatic()
+	{
+		bitBuffer->seekBytes(18);
+		const uint8_t renderMode = bitBuffer->readByte();
+		if (renderMode != 0)
+			bitBuffer->seekBytes(5);
+	}
 
     void DemoParser::MessageSendExtraInfo()
     {
@@ -1041,7 +1159,7 @@ namespace demo_analyser
 
 			std::string entityType = "entity_state_t";
 
-			if (entityNumber > 0 && entityNumber <= maxClients) 
+			if (entityNumber > 0 && entityNumber <= static_cast<uint32_t>(maxClients))
 			{
 				entityType = "entity_state_player_t";
 
@@ -1055,7 +1173,7 @@ namespace demo_analyser
 
 			delta_structure->readDelta(*bitBuffer, &halflifedelta);
 
-			if (entityNumber > 0 && entityNumber <= maxClients) 
+			if (entityNumber > 0 && entityNumber <= static_cast<uint32_t>(maxClients))
 			{
 				EntityStatePlayer entityStatePlayer = toEntityStatePlayer(halflifedelta);
 				if(OnPackedPlayerEntity)
@@ -1343,7 +1461,7 @@ namespace demo_analyser
 
 				std::string entityType = "entity_state_t";
 
-				if (entityNumber > 0 && entityNumber <= maxClients) {
+				if (entityNumber > 0 && entityNumber <= static_cast<uint32_t>(maxClients)) {
 					entityType = "entity_state_player_t";
 				} else if (custom) {
 					entityType = "custom_entity_state_t";
@@ -1355,7 +1473,7 @@ namespace demo_analyser
 
 				delta_structure->readDelta(*bitBuffer, &halflifedelta);
 
-				if (entityNumber > 0 && entityNumber <= maxClients) 
+				if (entityNumber > 0 && entityNumber <= static_cast<uint32_t>(maxClients))
 				{
 					EntityStatePlayer entityStatePlayer = toEntityStatePlayer(halflifedelta);
 					if(OnDeltaPackedPlayerEntity)
@@ -1442,11 +1560,11 @@ namespace demo_analyser
 	void DemoParser::Seek(std::streamoff offset, std::ios_base::seekdir origin) 
 	{
 		if (readingGameData) {
-            if (offset > std::numeric_limits<int32_t>::max())
-                throw std::runtime_error("Offset too large for BitBuffer seek");
-            bitBuffer->seekBytes(static_cast<int32_t>(offset), origin);
+            bitBuffer->seekBytes(offset, origin);
         } else {
             file.seekg(offset, origin);
+			if (!file)
+				throw std::runtime_error("Seek outside demo file");
         }
 	}
 
