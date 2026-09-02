@@ -271,6 +271,30 @@ namespace demo_analyser
 		deltaDescription->addEntry("preMultiplier", 32, 4000.0f, HalfLifeDeltaStructure::EntryFlags::Float);
 
 		AddDeltaStructure(std::move(deltaDescription));
+
+		// event_t is normally defined in the game's delta.lst, but its
+		// description is not guaranteed to be present in a recorded demo.
+		// Register the standard GoldSrc layout as a fallback; a received
+		// SVC_DELTADESCRIPTION will replace it for games with custom settings.
+		auto eventArgs = std::make_unique<HalfLifeDeltaStructure>("event_t");
+		using DeltaFlags = HalfLifeDeltaStructure::EntryFlags;
+		const auto signedFloat = static_cast<DeltaFlags>(
+			static_cast<uint32_t>(DeltaFlags::Float) | static_cast<uint32_t>(DeltaFlags::Signed));
+		const auto signedInteger = static_cast<DeltaFlags>(
+			static_cast<uint32_t>(DeltaFlags::Integer) | static_cast<uint32_t>(DeltaFlags::Signed));
+		eventArgs->addEntry("entindex", 10, 1.0f, DeltaFlags::Integer);
+		eventArgs->addEntry("bparam1", 1, 1.0f, DeltaFlags::Integer);
+		eventArgs->addEntry("bparam2", 1, 1.0f, DeltaFlags::Integer);
+		for (const char* component : {"origin[0]", "origin[1]", "origin[2]"})
+			eventArgs->addEntry(component, 16, 8.0f, signedFloat);
+		eventArgs->addEntry("fparam1", 20, 100.0f, signedFloat);
+		eventArgs->addEntry("fparam2", 20, 100.0f, signedFloat);
+		eventArgs->addEntry("iparam1", 16, 1.0f, signedInteger);
+		eventArgs->addEntry("iparam2", 16, 1.0f, signedInteger);
+		for (const char* component : {"angles[0]", "angles[1]", "angles[2]"})
+			eventArgs->addEntry(component, 16, 8.0f, signedFloat);
+		eventArgs->addEntry("ducking", 1, 1.0f, DeltaFlags::Integer);
+		AddDeltaStructure(std::move(eventArgs));
 		
 	}
 
@@ -812,7 +836,7 @@ namespace demo_analyser
 				bitBuffer->readUnsignedBits(11); // packet index
 
 			if (bitBuffer->readBoolean())
-				GetDeltaStructure("event_args_t")->readDelta(*bitBuffer);
+				GetDeltaStructure("event_t")->readDelta(*bitBuffer);
 
 			if (bitBuffer->readBoolean())
 				bitBuffer->readUnsignedBits(16); // fire time

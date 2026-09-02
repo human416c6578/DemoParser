@@ -197,7 +197,10 @@ void testSvcEventIsParsed(const std::filesystem::path& path)
     event.writeBits(17, 10);     // EventIndex
     event.writeBits(1, 1);       // HasEntsInPack
     event.writeBits(321, 11);    // PacketIndex
-    event.writeBits(0, 1);       // HasEventArgs
+    event.writeBits(1, 1);       // HasEventArgs
+    event.writeBits(1, 3);       // Delta bitmask byte count
+    event.writeBits(1, 8);       // entindex is present
+    event.writeBits(42, 10);     // event_t.entindex
     event.writeBits(1, 1);       // HasFireTime
     event.writeBits(1234, 16);   // FireTime
     event.alignToByte();
