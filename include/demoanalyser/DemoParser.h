@@ -1,5 +1,6 @@
 #include <BitBuffer.h>
 #include <HalfLifeDeltas.h>
+#include <demoanalyser/DemoStructs.h>
 
 #include <cstdint>
 #include <fstream>
@@ -155,7 +156,7 @@ namespace demo_analyser
 		uint32_t Length;
 	};
 
-	struct MessageHandler 
+	struct MessageHandler
 	{
 		int Id;
 		std::function<void()> Callback;  // or nullptr
@@ -187,6 +188,8 @@ namespace demo_analyser
 			int frames = 0;
 			bool serverInfoParsed = false;
 			std::uint64_t fileSize = 0;
+			FrameContext currentFrameContext{};
+			uint8_t currentMessageId = 0;
 
 			bool readingGameData = false;
 			void readDemoHeader(const std::vector<uint8_t>& headerData, std::uint64_t demoFileSize);
@@ -196,10 +199,11 @@ namespace demo_analyser
 			FrameHeader ReadFrameHeader();
 			GameDataFrameHeader ReadGameDataFrameHeader();
 			void ParseGameDataMessages(const std::vector<uint8_t>& frameData);
-			
+
 			void MessageClientData();
 			void MessageDeltaDescription();
 			void MessagePrint();
+			void MessageStuffText();
 			void MessageServerInfo();
 			void MessageExtraInfo();
 			void MessageNewMoveVars();
@@ -222,6 +226,7 @@ namespace demo_analyser
 			void MessageDeltaPacketEntities();
 			void MessageSound();
 			void MessagePing();
+			void MessageChoke();
 			void MessageTime();
 			void MessageSetAngle();
 
@@ -232,7 +237,7 @@ namespace demo_analyser
 
 			void AddUserMessage(uint8_t id, int8_t length, const std::string& name);
 			std::string FindMessageIdString(uint8_t id);
-			
+
 
 			void AddDeltaStructure(std::unique_ptr<HalfLifeDeltaStructure> structure)
 			{

@@ -101,7 +101,7 @@ namespace demo_analyser
 			AddMessageHandler(
 				static_cast<uint8_t>(SVCMessage::SVC_STUFFTEXT),
 				0,
-				[this]() { MessagePrint(); }
+				[this]() { MessageStuffText(); }
 			);
 
 			AddMessageHandler(
@@ -167,7 +167,7 @@ namespace demo_analyser
 			AddMessageHandler(
 				static_cast<uint8_t>(SVCMessage::SVC_CHOKE),
 				0,
-				nullptr
+				[this]() { MessageChoke(); }
 			);
 
 			AddMessageHandler(
@@ -330,6 +330,12 @@ namespace demo_analyser
 				throw std::runtime_error("Unexpected end of file before the demo ended");
 
 			FrameHeader frameHeader = ReadFrameHeader();
+			currentFrameContext = {
+				frameHeader.Type,
+				frameHeader.Timestamp,
+				frameHeader.Number,
+				currentDirectory
+			};
 
 			switch (frameHeader.Type)
 			{
@@ -383,6 +389,8 @@ namespace demo_analyser
 
 					if (OnConsoleCommand)
 						OnConsoleCommand(command);
+					if (OnConsoleCommandTimed)
+						OnConsoleCommandTimed(command, currentFrameContext);
 
 					break;
 				}
@@ -414,6 +422,8 @@ namespace demo_analyser
 
 						if (OnPlayerState)
 							OnPlayerState(state);
+						if (OnPlayerStateTimed)
+							OnPlayerStateTimed(state, currentFrameContext);
 					}
 					catch (const std::exception& ex)
 					{
@@ -642,6 +652,7 @@ namespace demo_analyser
 			while (true)
 			{
 				uint8_t messageId = bitBuffer->readByte();
+				currentMessageId = messageId;
 
 				std::string messageName = SVCMessageName(messageId);
 				if (messageName.empty())
@@ -764,6 +775,8 @@ namespace demo_analyser
 
 		if(OnClientData)
 			OnClientData(clientData);
+		if (OnClientDataTimed)
+			OnClientDataTimed(clientData, currentFrameContext);
 
 		// Weapon loop
 		while (bitBuffer->readBoolean())
@@ -800,7 +813,19 @@ namespace demo_analyser
 		{
 			OnMessagePrint(str);
 		}
+		if (currentMessageId == static_cast<uint8_t>(SVCMessage::SVC_PRINT) &&
+			OnMessagePrintTimed)
+			OnMessagePrintTimed(str, currentFrameContext);
     }
+
+	void DemoParser::MessageStuffText()
+	{
+		const std::string command = bitBuffer->readString();
+		if (OnMessagePrint)
+			OnMessagePrint(command);
+		if (OnServerCommandTimed)
+			OnServerCommandTimed(command, currentFrameContext);
+	}
 
 	void DemoParser::MessageServerInfo() {
 
@@ -1543,12 +1568,20 @@ namespace demo_analyser
 		bitBuffer->setEndian(EndianType::Little);
 	}
 
+	void DemoParser::MessageChoke()
+	{
+		if (OnChokeTimed)
+			OnChokeTimed(currentFrameContext);
+	}
+
 	void DemoParser::MessageTime()
 	{
 		float time = bitBuffer->readFloat();
 
 		if(OnTimeTick)
 			OnTimeTick(time);
+		if (OnTimeTickTimed)
+			OnTimeTickTimed(time, currentFrameContext);
 	}
 
 	void DemoParser::MessageUserDefault()

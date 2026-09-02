@@ -9,6 +9,14 @@ extern void OnConsoleCommand(const std::string& command) __attribute__((weak)); 
 extern void OnPlayerState(PlayerState& playerState) __attribute__((weak));      // FRAME TYPE 4
 extern void OnEventFrame(const EventFrame& eventFrame) __attribute__((weak));   // FRAME TYPE 6
 
+extern void OnConsoleCommandTimed(const std::string& command, const FrameContext& context) __attribute__((weak));
+extern void OnPlayerStateTimed(const PlayerState& playerState, const FrameContext& context) __attribute__((weak));
+extern void OnMessagePrintTimed(const std::string& message, const FrameContext& context) __attribute__((weak));
+extern void OnServerCommandTimed(const std::string& command, const FrameContext& context) __attribute__((weak));
+extern void OnClientDataTimed(const ClientData& clientData, const FrameContext& context) __attribute__((weak));
+extern void OnTimeTickTimed(float time, const FrameContext& context) __attribute__((weak));
+extern void OnChokeTimed(const FrameContext& context) __attribute__((weak));
+
 
 // EVENTS
 extern void OnTimeTick(float Time) __attribute__((weak));
@@ -23,5 +31,4 @@ extern void OnPackedPlayerEntity(EntityStatePlayer entityStatePlayer)  __attribu
 extern void OnPackedCustomEntity(CustomEntityState customEntityState)  __attribute__((weak));
 extern void OnDeltaPackedPlayerEntity(EntityStatePlayer entityStatePlayer)  __attribute__((weak));
 extern void OnDeltaPackedCustomEntity(CustomEntityState customEntityState)  __attribute__((weak));
-
 

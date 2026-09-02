@@ -1,5 +1,14 @@
+#pragma once
+
 #include <cstdint>
 #include <string>
+
+struct FrameContext {
+    uint8_t type = 0;
+    float timestamp = 0.0f;
+    uint32_t number = 0;
+    uint32_t segment = 0;
+};
 
 struct DemoHeader {
 	uint32_t networkProtocol = 0;
