@@ -25,6 +25,12 @@ namespace demo_analyser
 
 		{
 			AddMessageHandler(
+				static_cast<uint8_t>(SVCMessage::SVC_EVENT),
+				0,
+				[this]() { MessageEvent(); }
+			);
+
+			AddMessageHandler(
 				static_cast<uint8_t>(SVCMessage::SVC_BAD),
 				0,
 				nullptr 
@@ -791,6 +797,29 @@ namespace demo_analyser
 		bitBuffer->skipRemainingBits();
 
 		// Restore default endian
+		bitBuffer->setEndian(EndianType::Little);
+	}
+
+	void DemoParser::MessageEvent()
+	{
+		const uint32_t numberOfEvents = bitBuffer->readUnsignedBits(5);
+
+		for (uint32_t i = 0; i < numberOfEvents; ++i)
+		{
+			bitBuffer->readUnsignedBits(10); // event index
+
+			if (bitBuffer->readBoolean())
+				bitBuffer->readUnsignedBits(11); // packet index
+
+			if (bitBuffer->readBoolean())
+				GetDeltaStructure("event_args_t")->readDelta(*bitBuffer);
+
+			if (bitBuffer->readBoolean())
+				bitBuffer->readUnsignedBits(16); // fire time
+		}
+
+		// SVC_EVENT is bit-packed; the following network message starts on a byte boundary.
+		bitBuffer->skipRemainingBits();
 		bitBuffer->setEndian(EndianType::Little);
 	}
 

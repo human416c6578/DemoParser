@@ -201,6 +201,7 @@ namespace demo_analyser
 			void ParseGameDataMessages(const std::vector<uint8_t>& frameData);
 
 			void MessageClientData();
+			void MessageEvent();
 			void MessageDeltaDescription();
 			void MessagePrint();
 			void MessageStuffText();

@@ -38,6 +38,32 @@ void appendUInt32LE(std::vector<uint8_t>& data, uint32_t value)
     data.push_back(static_cast<uint8_t>(value >> 24));
 }
 
+class BitWriter {
+public:
+    void writeBits(uint32_t value, int bitCount)
+    {
+        for (int i = 0; i < bitCount; ++i) {
+            if ((bitPosition_ % 8) == 0)
+                data_.push_back(0);
+            if ((value & (uint32_t{1} << i)) != 0)
+                data_.back() |= static_cast<uint8_t>(uint8_t{1} << (bitPosition_ % 8));
+            ++bitPosition_;
+        }
+    }
+
+    void alignToByte()
+    {
+        while ((bitPosition_ % 8) != 0)
+            writeBits(0, 1);
+    }
+
+    const std::vector<uint8_t>& data() const { return data_; }
+
+private:
+    std::vector<uint8_t> data_;
+    size_t bitPosition_ = 0;
+};
+
 void putFixedString(std::vector<uint8_t>& data, size_t offset, size_t length,
                     const std::string& value)
 {
@@ -164,6 +190,41 @@ void testUnknownMessageDoesNotAbort(const std::filesystem::path& path)
     parser.parseDemo();
 }
 
+void testSvcEventIsParsed(const std::filesystem::path& path)
+{
+    BitWriter event;
+    event.writeBits(1, 5);       // NumberOfEvents
+    event.writeBits(17, 10);     // EventIndex
+    event.writeBits(1, 1);       // HasEntsInPack
+    event.writeBits(321, 11);    // PacketIndex
+    event.writeBits(0, 1);       // HasEventArgs
+    event.writeBits(1, 1);       // HasFireTime
+    event.writeBits(1234, 16);   // FireTime
+    event.alignToByte();
+
+    std::vector<uint8_t> messages = {3}; // SVC_EVENT
+    messages.insert(messages.end(), event.data().begin(), event.data().end());
+    messages.push_back(7); // SVC_TIME; confirms the event handler restored byte alignment.
+    appendUInt32LE(messages, 0);
+
+    const size_t payloadStart = 1021;
+    const size_t directoryOffset = payloadStart + messages.size() + 18;
+    std::vector<uint8_t> data = makeHeader(directoryOffset, directoryOffset + 188);
+    data.resize(544);
+    addFrameHeader(data, 0);
+    data.resize(payloadStart, 0);
+    putUInt32LE(data, 1017, static_cast<uint32_t>(messages.size()));
+    data.insert(data.end(), messages.begin(), messages.end());
+    addDirectoryMarkers(data);
+    std::vector<uint8_t> directory;
+    appendDirectory(directory);
+    data.insert(data.end(), directory.begin(), directory.end());
+
+    writeDemo(path, data);
+    demo_analyser::DemoParser parser(path.string());
+    parser.parseDemo();
+}
+
 void testOversizedFrameIsRejected(const std::filesystem::path& path)
 {
     const size_t payloadStart = 1021;
@@ -238,9 +299,12 @@ int main()
         std::filesystem::temp_directory_path() / "demo_parser_oversized.dem";
     const std::filesystem::path missingMarkerPath =
         std::filesystem::temp_directory_path() / "demo_parser_missing_marker.dem";
+    const std::filesystem::path svcEventPath =
+        std::filesystem::temp_directory_path() / "demo_parser_svc_event.dem";
 
     testMinimalDemo(minimalPath);
     testUnknownMessageDoesNotAbort(unsupportedPath);
+    testSvcEventIsParsed(svcEventPath);
     testOversizedFrameIsRejected(oversizedPath);
     testMissingEndMarkerIsRejected(missingMarkerPath);
 
@@ -248,5 +312,6 @@ int main()
     std::filesystem::remove(unsupportedPath);
     std::filesystem::remove(oversizedPath);
     std::filesystem::remove(missingMarkerPath);
+    std::filesystem::remove(svcEventPath);
     return 0;
 }
